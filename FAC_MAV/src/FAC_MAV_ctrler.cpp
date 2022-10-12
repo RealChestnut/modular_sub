@@ -166,7 +166,7 @@ int yaw_rotate_count = 0;
 
 static double r_arm = 0.109;// m // diagonal length between thruster : 218mm;
 static double l_servo = 0.015;
-static double mass = 2.8;//3.9; 2.365;//(Kg)
+static double mass = 2.9;//3.8; 2.365;//(Kg)
 
 
 //Propeller constants(DJI E800(3510 motors + 620S ESCs))
@@ -181,7 +181,7 @@ static double g = 9.80665;//(m/s^2)
 static double rp_limit = 0.3;//(rad)
 static double y_vel_limit = 0.01;//(rad/s)
 static double y_d_tangent_deadzone = (double)0.05 * y_vel_limit;//(rad/s)
-static double T_limit = 17;//(N)
+static double T_limit = 30;//(N) 
 static double altitude_limit = 1;//(m)
 static double XY_limit = 0.5;
 static double XYZ_dot_limit=1;
@@ -385,9 +385,6 @@ Eigen::MatrixXd invCM(4,4);
 
 //Linear_velocity--------------------------------------
 Eigen::Vector3d cam_v;
-Eigen::Vector3d cam_pos; //2022.10.06
-Eigen::Vector3d cam_p; //2022.10.06
-Eigen::Matrix3d R_p; //2022.10.06
 Eigen::Matrix3d R_v;
 Eigen::Vector3d v;
 //-----------------------------------------------------
@@ -586,7 +583,7 @@ int main(int argc, char **argv){
 	linear_acceleration = nh.advertise<geometry_msgs::Vector3>("lin_acl",100);
 
     ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber att = nh.subscribe("/gx5/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
+    ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
     ros::Subscriber rc_in = nh.subscribe("/sbus",100,sbusCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber battery_checker = nh.subscribe("/battery",100,batteryCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber t265_pos=nh.subscribe("/t265_pos",100,posCallback,ros::TransportHints().tcpNoDelay());
@@ -606,7 +603,7 @@ void publisherSet(){
 	start=std::chrono::high_resolution_clock::now();
 	// F << Eigen::MatrixXd::Identity(3,3), delta_t.count()*Eigen::MatrixXd::Identity(3,3),
 	// 	     Eigen::MatrixXd::Zero(3,3),                 Eigen::MatrixXd::Identity(3,3);
-	sine_wave_vibration();
+	//sine_wave_vibration();
 	setCM();
 	angular_Accel.x = (imu_ang_vel.x-prev_angular_Vel.x)/delta_t.count();
 	angular_Accel.y = (imu_ang_vel.y-prev_angular_Vel.y)/delta_t.count();
@@ -641,6 +638,7 @@ void publisherSet(){
 		pwm_Kill();	
 	}
 	else{
+		//pwm_Command(Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2]);
 		rpyT_ctrl();		
 	}
 	
@@ -659,25 +657,25 @@ void publisherSet(){
 	CoM.x = x_c_hat;
 	CoM.y = y_c_hat;
 	CoM.z = z_c_hat;
-	PWMs.publish(PWMs_cmd);
-	euler.publish(imu_rpy);
-	desired_angle.publish(angle_d);
-	Forces.publish(Force);
-	goal_dynamixel_position_.publish(servo_msg_create(theta1_command,-theta2_command));
-	desired_torque.publish(torque_d);
-	linear_velocity.publish(lin_vel);
+	PWMs.publish(PWMs_cmd);// PWMs_d value
+	euler.publish(imu_rpy);//rpy_act value
+	desired_angle.publish(angle_d);//rpy_d value
+	Forces.publish(Force);// force conclusion
+	goal_dynamixel_position_.publish(servo_msg_create(theta1_command,-theta2_command)); // desired theta
+	desired_torque.publish(torque_d); // torque desired
+	linear_velocity.publish(lin_vel); // actual linear velocity 
 	PWM_generator.publish(PWMs_val);
-	desired_position.publish(desired_pos);
-	position.publish(pos);
-	desired_force.publish(force_d);
+	desired_position.publish(desired_pos);//desired position 
+	position.publish(pos); // actual position
+	desired_force.publish(force_d); // desired force it need only tilt mode 
 	battery_voltage.publish(battery_voltage_msg);
-	force_command.publish(force_cmd);
+	force_command.publish(force_cmd); //not use
 	delta_time.publish(dt);
 	desired_velocity.publish(desired_lin_vel);
 	Center_of_Mass.publish(CoM);
 	angular_Acceleration.publish(angular_Accel);
-	sine_wave_data.publish(sine_wave);
-	disturbance.publish(dhat);
+	sine_wave_data.publish(sine_wave); //not use
+	disturbance.publish(dhat); // not use
 	linear_acceleration.publish(lin_acl);
 	prev_angular_Vel = imu_ang_vel;
 	prev_lin_vel = lin_vel;
@@ -830,64 +828,27 @@ void rpyT_ctrl() {
 		//ROS_INFO("Manual Thrust!!");
 	}
 	if(F_zd > -0.5*mass*g) F_zd = -0.5*mass*g;
-	if(F_zd < -1.5*mass*g) F_zd = -1.5*mass*g;
+	if(F_zd <= -1.5*mass*g) F_zd = -1.5*mass*g; //1.5
 	
-	//ESC-----------------------------------------------------
-	if(false){//ESC_control
-		//F_xd = F_xd + vibration2;
-		//F_yd = F_yd + vibration2;
-		F_zd = F_zd + vibration1;
-		
-		x_dot_11 = -pass_freq1/Q_factor*x_11-pow(pass_freq1,2.0)*x_12+MoI_y_hat*angular_Accel.y;
-		x_dot_12 = x_11;
-		x_11 += x_dot_11*delta_t.count();
-		x_12 += x_dot_12*delta_t.count();
-		y_11 = pass_freq1/Q_factor*x_11;
-		double gradient_bias_x_c = vibration1*y_11;
-		bias_x_c += gradient_bias_x_c*delta_t.count();
-		x_c_hat = -G_XY*bias_x_c;
-		if(fabs(x_c_hat)>x_c_limit) x_c_hat = x_c_hat/fabs(x_c_hat)*x_c_limit;
-		
-		x_dot_21 = -pass_freq1/Q_factor*x_21-pow(pass_freq1,2.0)*x_22+MoI_x_hat*angular_Accel.x;
-		x_dot_22 = x_21;
-		x_21 += x_dot_21*delta_t.count();
-		x_22 += x_dot_22*delta_t.count();
-		y_21 = pass_freq1/Q_factor*x_21;
-		double gradient_bias_y_c =vibration1*y_21;
-		bias_y_c += gradient_bias_y_c*delta_t.count();
-		y_c_hat = G_XY*bias_y_c;
-		if(fabs(y_c_hat)>y_c_limit) y_c_hat = y_c_hat/fabs(y_c_hat)*y_c_limit;
-		/*
-		x_dot_31 = -pass_freq2/Q_factor*x_31-pow(pass_freq2,2.0)*x_32+(MoI_x_hat*angular_Accel.x-MoI_y_hat*angular_Accel.y);
-		x_dot_32 = x_31;
-		x_31 += x_dot_31*delta_t.count();
-		x_32 += x_dot_32*delta_t.count();
-		y_31 = pass_freq2/Q_factor*x_31;
-		double gradient_bias_z_c = vibration2*y_31;
-		bias_z_c += gradient_bias_z_c*delta_t.count();
-		z_c_hat = -G_Z*bias_z_c;
-		if(fabs(z_c_hat)>z_c_limit) z_c_hat = z_c_hat/fabs(z_c_hat)*z_c_limit;
-		*/
-		//ROS_INFO("ESC");
-	}
-	//--------------------------------------------------------
 
 	//DOB-----------------------------------------------------
 		//disturbance_Observer();
 	//--------------------------------------------------------
-	tautilde_r_d = tau_r_d - dhat_r;
-	tautilde_p_d = tau_p_d - dhat_p;
+	
+	//tautilde_r_d = tau_r_d - dhat_r;
+	//tautilde_p_d = tau_p_d - dhat_p;
 	//u << tau_r_d, tau_p_d, tau_y_d, F_zd;
-	u << tautilde_r_d, tautilde_p_d, tau_y_d, F_zd;
-	torque_d.x = tautilde_r_d;
-	torque_d.y = tautilde_p_d;
+	//u << tautilde_r_d, tautilde_p_d, tau_y_d, F_zd;
+	torque_d.x = tau_r_d;
+	torque_d.y = tau_p_d;
 	torque_d.z = tau_y_d;
 	force_d.x = F_xd;
 	force_d.y = F_yd;
 	force_d.z = F_zd;
-
+	
+	u << tau_r_d, tau_p_d, tau_y_d, F_zd;
 	prev_angular_Vel = imu_ang_vel;
-	ud_to_PWMs(tau_r_d, tau_p_d, tau_y_d, Thrust_d);
+	ud_to_PWMs(tau_r_d, tau_p_d, tau_y_d, Thrust_d); //but not use 22.10.12
 	//ud_to_PWMs(tautilde_r_d, tautilde_p_d, tautilde_y_d, Thrust_d);
 }
 
@@ -898,7 +859,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	//Co-rotating coaxial
 	//Conventional type
 	F_cmd = invCM*u;
-	if(Sbus[8]<=1500){
+	if(Sbus[7]<=1500){
 		theta1_command = 0.0;
         theta2_command = 0.0;
 	}
@@ -937,7 +898,7 @@ double Force_to_PWM(double F) {
 	else pwm = param1;
 	if (pwm > 1900)	pwm = 1900;
 	if(pwm < 1100) pwm = 1100;
-	if(Sbus[5]>1500){
+	if(Sbus[5]>1500){//altitude mode
 		if(Z_d_base<=0){
 			if(Z_d>Z_d_base && !start_flag) {
 				pwm=param1;
@@ -1044,7 +1005,7 @@ void batteryCallback(const std_msgs::Int16& msg){
 	double kv=0.08;
 	voltage=kv*voltage+(1-kv)*voltage_old;
 	voltage_old=voltage;
-	ROS_INFO("%f",voltage);
+	//ROS_INFO("%f",voltage);
 	if(voltage>16.8) voltage=16.8;
 	if(voltage<13.0) voltage=13.0;
 	battery_voltage_msg.data=voltage;
@@ -1053,15 +1014,10 @@ void batteryCallback(const std_msgs::Int16& msg){
 
 ros::Time posTimer;
 void posCallback(const geometry_msgs::Vector3& msg){
-	R_p << cos(pi/2.), -sin(pi/2.),  0.,
-               sin(pi/2.),  cos(pi/2.),  0.,
-                        0.,           0.,  1.;
 
-	cam_pos << msg.x,msg.y,msg.z;
-	//cam_p = R_p*cam_pos;
-	pos.x=/*-cam_p(0);*/msg.x;
-	pos.y=/*-cam_p(1);*/msg.y;
-	pos.z=/*cam_p(2);*/msg.z;
+	pos.x=msg.x;
+	pos.y=msg.y;
+	pos.z=msg.z;
 }
 
 void rotCallback(const geometry_msgs::Quaternion& msg){
@@ -1239,7 +1195,7 @@ void kalman_Filtering(){
 }
 
 void pid_Gain_Setting(){
-	if(Sbus[8]<=1500){
+	if(Sbus[7]<=1500){
 		Pa = conv_Pa;
 		Ia = conv_Ia;
 		Da = conv_Da;
