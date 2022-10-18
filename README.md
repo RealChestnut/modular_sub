@@ -1,1 +1,1 @@
-# Modular_Aerial_Robot
+# SNUST - MRL :: Modular drone - sub
