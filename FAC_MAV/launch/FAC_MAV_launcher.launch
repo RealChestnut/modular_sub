@@ -64,12 +64,12 @@
     		<!--Conventional Mode attitude_rp gains-->
     		<param name="conv_attitude_rp_P_gain"	value="1.0"/>
     		<param name="conv_attitude_rp_I_gain"	value="0"/> 
-    		<param name="conv_attitude_rp_D_gain"	value="0.45"/>
+    		<param name="conv_attitude_rp_D_gain"	value="0.1"/>
 
 		<!--Conventional Mode attitude_y gain-->
-		<param name="conv_attitude_y_P_gain"	value="2.0"/>
+		<param name="conv_attitude_y_P_gain"	value="1.0"/>
 		<!--<param name="conv_attitude_y_I_gain"	value="0"/>-->
-		<param name="conv_attitude_y_D_gain"	value="0.2"/>
+		<param name="conv_attitude_y_D_gain"	value="0.1"/>
 
 		<!--Conventional Mode Altitude gains-->
 		<param name="conv_altitude_P_gain"	value="10.0"/>

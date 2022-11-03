@@ -26,6 +26,7 @@
 #include <std_msgs/Int32MultiArray.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/Bool.h>
 
 #include "tf/transform_datatypes.h"
 #include <tf2/LinearMath/Quaternion.h>
@@ -49,6 +50,7 @@ std::chrono::duration<double> delta_t;
 int16_t Sbus[8];
 int16_t PWM_d;
 int16_t loop_time;
+float Arr[4]; // for force call back
 std_msgs::Int16MultiArray PWMs_cmd;
 std_msgs::Int32MultiArray PWMs_val;
 std_msgs::Float32MultiArray Force;
@@ -92,6 +94,7 @@ bool attitude_mode = false;
 bool velocity_mode = false;
 bool position_mode = false;
 bool kill_mode = true;
+bool combined_mode = true; //2022_10_26
 bool altitude_mode = false;
 bool tilt_mode = false;
 bool ESC_control = false;
@@ -166,7 +169,7 @@ int yaw_rotate_count = 0;
 
 static double r_arm = 0.109;// m // diagonal length between thruster : 218mm;
 static double l_servo = 0.015;
-static double mass = 2.46;//2.9;//3.8; 2.365;//(Kg)
+static double mass = 2.76;//2.9;//3.8; 2.365;//(Kg)
 
 
 //Propeller constants(DJI E800(3510 motors + 620S ESCs))
@@ -345,33 +348,23 @@ void pwm_Calibration();
 void kalman_Filtering();
 void pid_Gain_Setting();
 void disturbance_Observer();
-void sine_wave_vibration();
+
+//combined drone
+void forceCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
+void servoCallback(const std_msgs::Float32MultiArray& msg);
+void killCallback(const std_msgs::Bool::ConstPtr& msg);
+
 //-------------------------------------------------------
 
 //Publisher Group--------------------------------------
-ros::Publisher PWMs;
-ros::Publisher goal_dynamixel_position_;
-ros::Publisher euler;
-ros::Publisher desired_angle;
-ros::Publisher Forces;
-ros::Publisher desired_torque;
-ros::Publisher linear_velocity;
-ros::Publisher angular_velocity;
-ros::Publisher PWM_generator;
-ros::Publisher desired_position;
-ros::Publisher position;
-ros::Publisher kalman_angular_vel;
-ros::Publisher kalman_angular_accel;
-ros::Publisher desired_force;
-ros::Publisher battery_voltage;
+ros::Publisher PWMs_sub;
+ros::Publisher goal_dynamixel_position_sub; //22.10.31
+
+ros::Publisher PWM_generator_sub;
+
+ros::Publisher battery_voltage_sub;
 ros::Publisher force_command;
-ros::Publisher delta_time;
-ros::Publisher desired_velocity;
-ros::Publisher Center_of_Mass;
-ros::Publisher angular_Acceleration;
-ros::Publisher sine_wave_data;
-ros::Publisher disturbance;
-ros::Publisher linear_acceleration;
+
 //----------------------------------------------------
 
 //Control Matrix---------------------------------------
@@ -474,122 +467,39 @@ double accel_cutoff_freq = 5.0;
 //-----------------------------------------------------
 int main(int argc, char **argv){
 	
-    	ros::init(argc, argv,"t3_mav_controller");
-
+    	//ros::init(argc, argv,"t3_mav_controller");
+	ros::init(argc, argv,"fac_mav_sub");
     	std::string deviceName;
     	ros::NodeHandle params("~");
-    	params.param<std::string>("device", deviceName, "/gx5");
-
     	ros::NodeHandle nh;
-
-	//Loading gains from the "t3_mav_controller.launch" file
-		//integratior(PID) limitation
-		integ_limit=nh.param<double>("attitude_integ_limit",10);
-		z_integ_limit=nh.param<double>("altitude_integ_limit",100);
-		pos_integ_limit=nh.param<double>("position_integ_limit",10);
-
-		//Center of Mass
-		x_c_hat=nh.param<double>("x_center_of_mass",0.0);
-		y_c_hat=nh.param<double>("y_center_of_mass",0.0);
-		z_c_hat=nh.param<double>("z_center_of_mass",0.0);
-		CoM.x = x_c_hat;
-		CoM.y = y_c_hat;
-		CoM.z = z_c_hat;
-
-		//Conventional Flight Mode Control Gains
-			//Roll, Pitch PID gains
-			conv_Pa=nh.param<double>("conv_attitude_rp_P_gain",3.5);
-			conv_Ia=nh.param<double>("conv_attitude_rp_I_gain",0.4);
-			conv_Da=nh.param<double>("conv_attitude_rp_D_gain",0.5);
-
-			//Yaw PID gains
-			conv_Py=nh.param<double>("conv_attitude_y_P_gain",2.0);
-			conv_Dy=nh.param<double>("conv_attitude_y_D_gain",0.1);
-
-			//Altitude PID gains
-			conv_Pz=nh.param<double>("conv_altitude_P_gain",16.0);
-			conv_Iz=nh.param<double>("conv_altitude_I_gain",5.0);
-			conv_Dz=nh.param<double>("conv_altitude_D_gain",15.0);
-
-			//Velocity PID gains
-			conv_Pv=nh.param<double>("conv_velocity_P_gain",5.0);
-			conv_Iv=nh.param<double>("conv_velocity_I_gain",1.0);
-			conv_Dv=nh.param<double>("conv_velocity_D_gain",5.0);
-
-			//Position PID gains
-			conv_Pp=nh.param<double>("conv_position_P_gain",3.0);
-			conv_Ip=nh.param<double>("conv_position_I_gain",0.1);
-			conv_Dp=nh.param<double>("conv_position_D_gain",5.0);
-
-		//Tilt Flight Mode Control Gains
-			//Roll, Pitch PID gains
-			tilt_Pa=nh.param<double>("tilt_attitude_rp_P_gain",3.5);
-			tilt_Ia=nh.param<double>("tilt_attitude_rp_I_gain",0.4);
-			tilt_Da=nh.param<double>("tilt_attitude_rp_D_gain",0.5);
-
-			//Yaw PID gains
-			tilt_Py=nh.param<double>("tilt_attitude_y_P_gain",5.0);
-			tilt_Dy=nh.param<double>("tilt_attitude_y_D_gain",0.3);
-
-			//Altitude PID gains
-			tilt_Pz=nh.param<double>("tilt_altitude_P_gain",15.0);
-			tilt_Iz=nh.param<double>("tilt_altitude_I_gain",5.0);
-			tilt_Dz=nh.param<double>("tilt_altitude_D_gain",10.0);
-
-			//Velocity PID gains
-			tilt_Pv=nh.param<double>("tilt_velocity_P_gain",5.0);
-			tilt_Iv=nh.param<double>("tilt_velocity_I_gain",0.1);
-			tilt_Dv=nh.param<double>("tilt_velocity_D_gain",5.0);
-
-			//Position PID gains
-			tilt_Pp=nh.param<double>("tilt_position_P_gain",3.0);
-			tilt_Ip=nh.param<double>("tilt_position_I_gain",0.1);
-			tilt_Dp=nh.param<double>("tilt_position_D_gain",5.0);
 
 	//----------------------------------------------------------
 	
-	//Kalman initialization-------------------------------------
-		x << 0, 0, 0, 0, 0, 0;
-		P << Eigen::MatrixXd::Identity(6,6);
-		H << Eigen::MatrixXd::Identity(3,3), Eigen::MatrixXd::Zero(3,3);
-		Q << Eigen::MatrixXd::Identity(3,3), Eigen::MatrixXd::Zero(3,3),
-		     Eigen::MatrixXd::Zero(3,3), 100.*Eigen::MatrixXd::Identity(3,3);
-		R << 0.0132*Eigen::MatrixXd::Identity(3,3);
-        //----------------------------------------------------------
+
 	//Set Control Matrix----------------------------------------
 		setCM();
                 F_cmd << 0, 0, 0, 0;
 	//----------------------------------------------------------
-    PWMs = nh.advertise<std_msgs::Int16MultiArray>("PWMs", 1); // PWM 1,2,3,4
-    PWM_generator = nh.advertise<std_msgs::Int32MultiArray>("/command",1);  // publish to pca9685
-    goal_dynamixel_position_  = nh.advertise<sensor_msgs::JointState>("goal_dynamixel_position",100); // desired theta1,2
-	euler = nh.advertise<geometry_msgs::Vector3>("angle",1); // roll, pitch, yaw
-	desired_angle = nh.advertise<geometry_msgs::Vector3>("desired_angle",100);
-	Forces = nh.advertise<std_msgs::Float32MultiArray>("Forces",100); // F 1,2,3,4
-	desired_torque = nh.advertise<geometry_msgs::Vector3>("torque_d",100);
-	linear_velocity = nh.advertise<geometry_msgs::Vector3>("lin_vel",100);
-	angular_velocity = nh.advertise<geometry_msgs::Vector3>("gyro",100);
-	desired_position = nh.advertise<geometry_msgs::Vector3>("pos_d",100);
-	position = nh.advertise<geometry_msgs::Vector3>("pos",100);
-	desired_force = nh.advertise<geometry_msgs::Vector3>("force_d",100);
-	battery_voltage = nh.advertise<std_msgs::Float32>("battery_voltage",100);
-	force_command = nh.advertise<std_msgs::Float32MultiArray>("force_cmd",100);
-	delta_time = nh.advertise<std_msgs::Float32>("delta_t",100);
-	desired_velocity = nh.advertise<geometry_msgs::Vector3>("lin_vel_d",100);
-	Center_of_Mass = nh.advertise<geometry_msgs::Vector3>("Center_of_Mass",100);
-	angular_Acceleration = nh.advertise<geometry_msgs::Vector3>("ang_accel",100);
-	sine_wave_data = nh.advertise<geometry_msgs::Vector3>("sine_wave",100);
-	disturbance = nh.advertise<geometry_msgs::Vector3>("dhat",100);
-	linear_acceleration = nh.advertise<geometry_msgs::Vector3>("lin_acl",100);
+    
+		PWMs_sub = nh.advertise<std_msgs::Int16MultiArray>("PWMs_sub", 1); // PWM 1,2,3,4
+    PWM_generator_sub = nh.advertise<std_msgs::Int32MultiArray>("/command_sub",1);  // publish to pca9685 //22.10.27
 
-    ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber rc_in = nh.subscribe("/sbus",100,sbusCallback,ros::TransportHints().tcpNoDelay());
-	ros::Subscriber battery_checker = nh.subscribe("/battery",100,batteryCallback,ros::TransportHints().tcpNoDelay());
-	ros::Subscriber t265_pos=nh.subscribe("/t265_pos",100,posCallback,ros::TransportHints().tcpNoDelay());
-	ros::Subscriber t265_rot=nh.subscribe("/t265_rot",100,rotCallback,ros::TransportHints().tcpNoDelay());
-	ros::Subscriber t265_odom=nh.subscribe("/rs_t265/odom/sample",100,t265OdomCallback,ros::TransportHints().tcpNoDelay());
+    goal_dynamixel_position_sub  = nh.advertise<sensor_msgs::JointState>("goal_dynamixel_position_sub",100); // desired theta1,2 //22.10.31    need to compare with sub drone's servo angle 1, 2
+	battery_voltage_sub = nh.advertise<std_msgs::Float32>("battery_voltage_sub",100);//22.10.27
 	
+
+		
+    ros::Subscriber dynamixel_state_sub = nh.subscribe("joint_states_sub",100,jointstateCallback,ros::TransportHints().tcpNoDelay());//22.10.29
+//    ros::Subscriber rc_in = nh.subscribe("/sbus_sub",100,sbusCallback,ros::TransportHints().tcpNoDelay()); //22.10.29
+    ros::Subscriber battery_checker = nh.subscribe("/battery_sub",100,batteryCallback,ros::TransportHints().tcpNoDelay()); //22.10.29
+
+
+	// 마스터드론에서 받아올 데이터 
+	ros::Subscriber master2slave_force = nh.subscribe("master2slave_force_pub",100,forceCallback,ros::TransportHints().tcpNoDelay());
+
+//	ros::Subscriber master2slave_servo = nh.subscribe("master2slave_servo_pub",100,servoCallback,ros::TransportHints().tcpNoDelay());
+	ros::Subscriber kill_switch_sub = nh.subscribe("kill_switch_sub",100,killCallback,ros::TransportHints().tcpNoDelay());
+
 	ros::Timer timerPublish = nh.createTimer(ros::Duration(1.0/200.0),std::bind(publisherSet));
     ros::spin();
     return 0;
@@ -603,7 +513,7 @@ void publisherSet(){
 	start=std::chrono::high_resolution_clock::now();
 	// F << Eigen::MatrixXd::Identity(3,3), delta_t.count()*Eigen::MatrixXd::Identity(3,3),
 	// 	     Eigen::MatrixXd::Zero(3,3),                 Eigen::MatrixXd::Identity(3,3);
-	//sine_wave_vibration();
+	
 	setCM();
 	angular_Accel.x = (imu_ang_vel.x-prev_angular_Vel.x)/delta_t.count();
 	angular_Accel.y = (imu_ang_vel.y-prev_angular_Vel.y)/delta_t.count();
@@ -636,13 +546,16 @@ void publisherSet(){
 		theta1_command=0.0;
 		theta2_command=0.0;
 		pwm_Kill();
-		//ROS_INFO("Kill mode");	
+		//ROS_INFO("Kill mode");
+		//ROS_INFO("%f,%f,%f,%f",F1,F2,F3,F4);	
 	}
 	else{
 		//pwm_Command(Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2],Sbus[2]);
 		//pwm_Command(1000,1000,1000,Sbus[2],1000,1000,1000,1000);
 
 		rpyT_ctrl();		
+		//ROS_INFO("PWM_MODE");
+		//ROS_INFO("%f,%f,%f,%f",F1,F2,F3,F4);
 
 	}
 
@@ -661,26 +574,13 @@ void publisherSet(){
 	CoM.x = x_c_hat;
 	CoM.y = y_c_hat;
 	CoM.z = z_c_hat;
-	PWMs.publish(PWMs_cmd);// PWMs_d value
-	euler.publish(imu_rpy);//rpy_act value
-	desired_angle.publish(angle_d);//rpy_d value
-	Forces.publish(Force);// force conclusion
-	goal_dynamixel_position_.publish(servo_msg_create(theta1_command,-theta2_command)); // desired theta
-	desired_torque.publish(torque_d); // torque desired
-	linear_velocity.publish(lin_vel); // actual linear velocity 
-	PWM_generator.publish(PWMs_val);
-	desired_position.publish(desired_pos);//desired position 
-	position.publish(pos); // actual position
-	desired_force.publish(force_d); // desired force it need only tilt mode 
-	battery_voltage.publish(battery_voltage_msg);
-	force_command.publish(force_cmd); //not use
-	delta_time.publish(dt);
-	desired_velocity.publish(desired_lin_vel);
-	Center_of_Mass.publish(CoM);
-	angular_Acceleration.publish(angular_Accel);
-	sine_wave_data.publish(sine_wave); //not use
-	disturbance.publish(dhat); // not use
-	linear_acceleration.publish(lin_acl);
+	
+	PWMs_sub.publish(PWMs_cmd);// PWMs_d value
+	goal_dynamixel_position_sub.publish(servo_msg_create(theta1_command,-theta2_command)); // desired theta
+	
+	PWM_generator_sub.publish(PWMs_val);
+	battery_voltage_sub.publish(battery_voltage_msg);
+	
 	prev_angular_Vel = imu_ang_vel;
 	prev_lin_vel = lin_vel;
 }
@@ -862,6 +762,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
  	
 	//Co-rotating coaxial
 	//Conventional type
+	/*
 	F_cmd = invCM*u;
 	if(Sbus[7]<=1500){
 		theta1_command = 0.0;
@@ -878,8 +779,11 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F2 = F_cmd(1);
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
+	*/
 
-	pwm_Command(Force_to_PWM(F1),Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4), Force_to_PWM(F1), Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4));
+	//pwm_Command(Force_to_PWM(F1),Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4), Force_to_PWM(F1), Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4));
+	//it be changed  22.10.27
+	pwm_Command(Force_to_PWM(F3),Force_to_PWM(F4), Force_to_PWM(F1), Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4), Force_to_PWM(F1), Force_to_PWM(F2));
 	
 	// ROS_INFO("1:%d, 2:%d, 3:%d, 4:%d",PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
 	// ROS_INFO("%f 1:%d, 2:%d, 3:%d, 4:%d",z_d,PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
@@ -1158,7 +1062,7 @@ void pwm_Arm(){
 	PWMs_cmd.data[6] = 1200;
 	PWMs_cmd.data[7] = 1200;
 	PWMs_val.data.resize(16);
-	PWMs_val.data[0] = pwmMapping(2000.);
+	PWMs_val.data[0] = pwmMapping(1200.);
 	PWMs_val.data[1] = pwmMapping(2000.);
 	PWMs_val.data[2] = pwmMapping(2000.);
 	PWMs_val.data[3] = pwmMapping(2000.);
@@ -1321,10 +1225,26 @@ void disturbance_Observer(){
 	//--------------------------------------------------------------------------------------
 }
 
-void sine_wave_vibration(){
-	vibration1 = Amp_Z*sin(pass_freq1*time_count);
-	vibration2 = Amp_XY*sin(pass_freq2*time_count);
-	sine_wave.x = vibration1;
-	sine_wave.y = vibration2;
-	time_count += delta_t.count();
+void forceCallback(const std_msgs::Float32MultiArray::ConstPtr& msg){
+	for(int i=0;i<4;i++){
+                Arr[i]=msg->data[i];
+        }
+	F1=Arr[0];
+	F2=Arr[1];
+	F3=Arr[2];
+	F4=Arr[3];
+	//ROS_INFO("clear");
+	//ROS_INFO("%f,%f,%f,%f",F1,F2,F3,F4);
+
 }
+void servoCallback(const std_msgs::Float32MultiArray& msg){
+	theta1_command = msg.data[0];
+	theta2_command = msg.data[1];
+	if(fabs(theta1_command)>hardware_servo_limit) theta1_command = (theta1_command/fabs(theta1_command))*hardware_servo_limit;
+	if(fabs(theta2_command)>hardware_servo_limit) theta2_command = (theta2_command/fabs(theta2_command))*hardware_servo_limit;
+}
+void killCallback(const std_msgs::Bool::ConstPtr& msg){
+	kill_mode = msg->data;
+//	ROS_INFO("clear");
+}
+

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(FAC_MAV)
+project(FAC_MAV_sub)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -118,7 +118,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES FAC_MAV
+  LIBRARIES FAC_MAV_sub
   CATKIN_DEPENDS roscpp std_msgs message_runtime
   DEPENDS system_lib
   DEPENDS Eigen
@@ -150,6 +150,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(FAC_MAV_ctrler src/FAC_MAV_ctrler.cpp)
 add_executable(FAC_MAV_GUI_ctrler src/FAC_MAV_GUI_ctrler.cpp)
+add_executable(fac_mav_sub src/fac_mav_sub.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -160,12 +161,17 @@ add_executable(FAC_MAV_GUI_ctrler src/FAC_MAV_GUI_ctrler.cpp)
 ## same as for the library above
 add_dependencies(FAC_MAV_ctrler ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(FAC_MAV_GUI_ctrler ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(fac_mav_sub ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 ## Specify libraries to link a library or executable target against
 target_link_libraries(FAC_MAV_ctrler
   ${catkin_LIBRARIES}
   ${Eigen_LIBRARIES}
 )
 target_link_libraries(FAC_MAV_GUI_ctrler
+  ${catkin_LIBRARIES}
+  ${Eigen_LIBRARIES}
+)
+target_link_libraries(fac_mav_sub
   ${catkin_LIBRARIES}
   ${Eigen_LIBRARIES}
 )
